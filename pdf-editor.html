@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My PDF Editor – Add Text to PDF</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            font-size: 1.8rem;
+            color: #1a3e60;
+            margin-top: 0;
+        }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #ddd;
+            align-items: flex-end;
+        }
+        .tool-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-size: 0.8rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        input, button {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-size: 0.9rem;
+        }
+        button {
+            background: #2c7da0;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        button:hover {
+            background: #1f5e7a;
+        }
+        .viewer-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            min-height: 500px;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            background: white;
+        }
+        .status {
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: #2c3e50;
+        }
+        .coords {
+            display: flex;
+            gap: 10px;
+        }
+        .coords input {
+            width: 80px;
+        }
+        hr {
+            margin: 20px 0;
+        }
+        .info {
+            font-size: 0.8rem;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+    </style>
+    <!-- Include PDF.js and pdf-lib from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>📄 My PDF Editor (Add Text)</h1>
+    <div class="toolbar">
+        <div class="tool-group">
+            <label>📂 Select PDF</label>
+            <input type="file" id="fileInput" accept="application/pdf">
+        </div>
+        <div class="tool-group">
+            <label>✏️ Text to add</label>
+            <input type="text" id="textInput" placeholder="Hello World!" value="Edited with my PDF tool">
+        </div>
+        <div class="tool-group">
+            <label>📍 X position (points)</label>
+            <input type="number" id="xPos" value="100" step="10">
+        </div>
+        <div class="tool-group">
+            <label>📍 Y position (points)</label>
+            <input type="number" id="yPos" value="700" step="10">
+        </div>
+        <div class="tool-group">
+            <label>🔤 Font size</label>
+            <input type="number" id="fontSize" value="16" step="2">
+        </div>
+        <button id="applyTextBtn">➕ Add Text & Download</button>
+    </div>
+
+    <div class="viewer-area">
+        <canvas id="pdfCanvas"></canvas>
+        <div id="status" class="status">Ready. Load a PDF to preview the first page.</div>
+    </div>
+    <div class="info">
+        💡 <strong>How it works:</strong> The app loads your PDF, renders the first page with PDF.js. When you click "Add Text & Download", 
+        it uses <strong>pdf-lib</strong> to embed your text into the actual PDF content (not just an overlay). The modified PDF is then downloaded 
+        – and you can re-upload it to see the changes.
+        <br><br>
+        ⚠️ Note: Coordinates start from bottom‑left corner of the page. Typical A4 page is 595x842 points.
+        Use the preview to experiment with positions.
+    </div>
+</div>
+
+<script>
+    // Global variables
+    let currentPdfData = null;       // Store original PDF as ArrayBuffer
+    let currentPdfDoc = null;        // PDF.js document object
+    let currentPageWidth = 0;
+    let currentPageHeight = 0;
+
+    // DOM elements
+    const fileInput = document.getElementById('fileInput');
+    const canvas = document.getElementById('pdfCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusDiv = document.getElementById('status');
+    const applyBtn = document.getElementById('applyTextBtn');
+
+    // Configure PDF.js worker (use CDN worker)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    // ----- Helper: Render first page using PDF.js -----
+    async function renderFirstPage(pdfData) {
+        try {
+            // Load PDF document with PDF.js
+            const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+            const pdf = await loadingTask.promise;
+            currentPdfDoc = pdf;
+            const page = await pdf.getPage(1);
+            const viewport = page.getViewport({ scale: 1.5 });  // scale for better preview
+            currentPageWidth = viewport.width;
+            currentPageHeight = viewport.height;
+
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+            await page.render(renderContext).promise;
+            statusDiv.innerText = `Page 1 rendered (size: ${Math.round(currentPageWidth)} x ${Math.round(currentPageHeight)} points)`;
+        } catch (err) {
+            console.error("Render error:", err);
+            statusDiv.innerText = "Error rendering PDF. Check file.";
+        }
+    }
+
+    // ----- Load file and store ArrayBuffer, then render -----
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        statusDiv.innerText = "Loading PDF...";
+        const arrayBuffer = await file.arrayBuffer();
+        currentPdfData = new Uint8Array(arrayBuffer);
+        await renderFirstPage(currentPdfData);
+    });
+
+    // ----- EDIT PDF using pdf-lib: add text to first page and download -----
+    applyBtn.addEventListener('click', async () => {
+        if (!currentPdfData) {
+            alert("Please load a PDF file first.");
+            return;
+        }
+
+        const textToAdd = document.getElementById('textInput').value;
+        if (!textToAdd.trim()) {
+            alert("Please enter some text to add.");
+            return;
+        }
+
+        const x = parseFloat(document.getElementById('xPos').value);
+        const y = parseFloat(document.getElementById('yPos').value);
+        const fontSize = parseFloat(document.getElementById('fontSize').value);
+
+        if (isNaN(x) || isNaN(y) || isNaN(fontSize)) {
+            alert("Invalid coordinates or font size.");
+            return;
+        }
+
+        statusDiv.innerText = "Editing PDF... please wait.";
+
+        try {
+            // Load the PDF with pdf-lib
+            const pdfDoc = await PDFLib.PDFDocument.load(currentPdfData);
+            const pages = pdfDoc.getPages();
+            if (pages.length === 0) throw new Error("No pages found");
+            const firstPage = pages[0];
+
+            // Get page dimensions (pdf-lib uses points)
+            const { width, height } = firstPage.getSize();
+
+            // Add the text. Use Helvetica font (built-in)
+            const helveticaFont = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+            firstPage.drawText(textToAdd, {
+                x: x,
+                y: y,
+                size: fontSize,
+                font: helveticaFont,
+                color: PDFLib.rgb(0, 0, 0),  // black
+                opacity: 1
+            });
+
+            // Serialize the modified PDF
+            const modifiedPdfBytes = await pdfDoc.save();
+
+            // Create download link
+            const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'edited_document.pdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            statusDiv.innerText = "✅ PDF saved! Download started. You can now re-upload the edited file to see changes.";
+
+            // Optional: update currentPdfData with the modified version so that preview updates if user re-uploads?
+            // We won't auto-update preview to avoid confusion, but user can re-open the downloaded file.
+        } catch (err) {
+            console.error("Editing error:", err);
+            statusDiv.innerText = "❌ Error during PDF editing: " + err.message;
+            alert("Failed to edit PDF. Check console for details.");
+        }
+    });
+</script>
+</body>
+</html>
